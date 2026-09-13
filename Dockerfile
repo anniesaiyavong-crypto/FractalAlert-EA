@@ -19,6 +19,19 @@ RUN dpkg --add-architecture i386 && \
     python3 \
     net-tools \
     && rm -rf /var/lib/apt/lists/*
+# Install Python 3 and pip
+RUN apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install MT5 Python bridge and analysis libraries
+RUN pip3 install --no-cache-dir \
+    MetaTrader5 \
+    pandas \
+    numpy \
+    backtesting
+    
 
 # Set up environment variables
 ENV DISPLAY=:99 \
