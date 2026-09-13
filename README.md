@@ -1,4 +1,8 @@
 
+# Headless Trading Bot Setup
+
+This guide explains how to set up MetaTrader 5 and run a trading bot headlessly inside local/cloud machine using Docker.
+
 ## Build and run
 
 ```bash

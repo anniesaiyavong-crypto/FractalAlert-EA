@@ -22,5 +22,14 @@ openbox &
 # Start VNC server (bound to all interfaces)
 x11vnc -display :99 -listen 0.0.0.0 -forever -shared -rfbport 5900 -nopw &
 
-# Keep container alive if MT5 isn't launched yet
-tail -f /dev/null
+# Define default MT5 terminal path
+MT5_PATH="$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe"
+
+# Launch MT5 if installed, otherwise wait for setup
+if [ -f "$MT5_PATH" ]; then
+    echo "Starting MetaTrader 5..."
+    wine "$MT5_PATH" /portable
+else
+    echo "MT5 terminal not found. Run mt5setup.exe via VNC first."
+    tail -f /dev/null
+fi
