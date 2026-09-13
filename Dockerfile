@@ -26,7 +26,7 @@ RUN apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install MT5 Python bridge and analysis libraries
-RUN pip3 install --no-cache-dir \
+RUN apt-get update &&pip3 install --no-cache-dir \
     MetaTrader5 \
     pandas \
     numpy \
