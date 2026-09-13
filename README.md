@@ -42,7 +42,8 @@ To stop the container:
 ```bash
 docker compose down
 ```
-
+# Directory overview
+```
 ├── Dockerfile
 ├── docker-compose.yml
 ├── entrypoint.sh
@@ -51,3 +52,4 @@ docker compose down
 │   ├── backtest.py
 │   └── main_bot.py
 └── mt5_data/             <-- Wine directory (auto-managed by Docker volume)
+```
