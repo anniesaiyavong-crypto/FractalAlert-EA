@@ -9,6 +9,8 @@ services:
       - "5900:5900" # VNC port
     volumes:
       - ./mt5_data:/root/.wine # Persist MT5 configuration, EAs, and indicators
+      - ./app:/app             # Python bot scripts & output CSVs
+    working_dir: /app
     environment:
       - DISPLAY=:99
       - SCREEN_SIZE=1280x1024x24
