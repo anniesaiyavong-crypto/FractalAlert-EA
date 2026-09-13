@@ -3,7 +3,7 @@ FROM ubuntu:22.04
 # Prevent interactive prompts during build
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Wine, Xvfb, Window Manager, VNC, and dependencies
+# Install Wine, Xvfb, Openbox, x11vnc, and base tools in a single layer
 RUN dpkg --add-architecture i386 && \
     apt-get update && apt-get install -y --no-install-recommends \
     wget \
@@ -16,22 +16,8 @@ RUN dpkg --add-architecture i386 && \
     wine64 \
     wine32 \
     winetricks \
-    python3 \
     net-tools \
     && rm -rf /var/lib/apt/lists/*
-# Install Python 3 and pip
-RUN apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install MT5 Python bridge and analysis libraries
-RUN apt-get update &&pip3 install --no-cache-dir \
-    MetaTrader5 \
-    pandas \
-    numpy \
-    backtesting
-    
 
 # Set up environment variables
 ENV DISPLAY=:99 \

@@ -47,9 +47,5 @@ docker compose down
 ├── Dockerfile
 ├── docker-compose.yml
 ├── entrypoint.sh
-├── app/                  <-- Python scripts & CSV data 
-│   ├── download_data.py
-│   ├── backtest.py
-│   └── main_bot.py
-└── mt5_data/             <-- Wine directory (auto-managed by Docker volume)
+└── mt5_data/             <-- Wine directory (contains MT5, EAs, & configs)
 ```
