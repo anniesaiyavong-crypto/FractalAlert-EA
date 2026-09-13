@@ -1,24 +1,26 @@
 #!/bin/bash
 
+
+rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
+
 # Start virtual display (Xvfb)
-Xvfb :99 -screen 0 ${SCREEN_SIZE} &
+Xvfb :99 -screen 0 1280x1024x24 -ac +extension GLX +render -noreset &
+XVFB_PID=$!
+
+# Wait briefly for Xvfb to start
 sleep 2
 
-# Start lightweight window manager
+# Verify Xvfb is running
+if ! ps -p $XVFB_PID > /dev/null; then
+    echo "Xvfb failed to start!"
+    exit 1
+fi
+
+# Start window manager
 openbox &
 
-# Start VNC server (allows setup via remote desktop)
-x11vnc -display :99 -forever -shared -rfbport 5900 -nopw &
+# Start VNC server (bound to all interfaces)
+x11vnc -display :99 -listen 0.0.0.0 -forever -shared -rfbport 5900 -nopw &
 
-# Initialize Wine prefix if not created
-if [ ! -d "$WINEPREFIX" ]; then
-    wineboot --init
-fi
-
-# Run MT5 if installed, otherwise keep container active
-if [ -f "$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe" ]; then
-    wine "$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe"
-else
-    echo "MT5 not found. Use VNC on port 5900 or copy MT5 installer into container."
-    tail -f /dev/null
-fi
+# Keep container alive if MT5 isn't launched yet
+tail -f /dev/null
