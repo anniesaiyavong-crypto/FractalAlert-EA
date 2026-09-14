@@ -1,5 +1,7 @@
 #!/bin/bash
 
+export WINEPREFIX=${WINEPREFIX:-/root/.wine}
+export DISPLAY=:99
 
 rm -f /tmp/.X99-lock /tmp/.X11-unix/X99
 
@@ -10,16 +12,19 @@ XVFB_PID=$!
 # Wait briefly for Xvfb to start
 sleep 2
 
+# Start window manager
+openbox &
+sleep 1
+
+# Start VNC server (bound to all interfaces)
+x11vnc -display :99 -forever -shared -rfbport 5900 -nopw &
+sleep 1
+
 # Verify Xvfb is running
 if ! ps -p $XVFB_PID > /dev/null; then
     echo "Xvfb failed to start!"
     exit 1
 fi
-# Start window manager
-openbox &
-sleep 1
-# Start VNC server (bound to all interfaces)
-x11vnc -display :99 -listen 0.0.0.0 -forever -shared -rfbport 5900 -nopw &
 
 # Define default MT5 terminal path
 MT5_PATH="$WINEPREFIX/drive_c/Program Files/MetaTrader 5/terminal64.exe"
@@ -30,5 +35,6 @@ if [ -f "$MT5_PATH" ]; then
     wine "$MT5_PATH" /portable
 else
     echo "MT5 terminal not found. Run mt5setup.exe via VNC first."
-    tail -f /dev/null
 fi
+
+tail -f /dev/null
