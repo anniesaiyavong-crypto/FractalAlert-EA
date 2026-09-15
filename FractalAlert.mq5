@@ -1,6 +1,6 @@
 // Detects confirmed Bill Williams Fractals and sends Telegram alerts with chart screenshots
 #property copyright "Asanay"
-#property version   "1.1"
+#property version   "1.2"
 
 // Input Parameters
 input group "--- Telegram Settings ---"
@@ -40,8 +40,8 @@ int OnInit()
       return INIT_FAILED;
    }
 
-   m_lastBarTime = 0;
-   m_imageCounter = 0;
+   m_lastBarTime          = 0;
+   m_imageCounter         = 0;
    m_lastUpperFractalTime = 0;
    m_lastLowerFractalTime = 0;
 
@@ -78,26 +78,17 @@ bool GetLatestFractal(int bufferIndex, double &fractalPrice, datetime &fractalTi
    int count = InpFractalLookback;
    if(count < 5) count = 5;
 
-   // Copy buffer starting from bar 0 with AsSeries = true
-   // index 0 = current open bar
-   // index 1 = previous closed bar
-   // index 2 = confirmed fractal candidate bar
    if(CopyBuffer(m_fractalHandle, bufferIndex, 0, count, fractalBuf) < count)
-   {
-      Print("WARNING: Failed to copy fractal buffer ", bufferIndex, ", error: ", GetLastError());
       return false;
-   }
 
    if(CopyTime(_Symbol, _Period, 0, count, timeBuf) < count)
-   {
-      Print("WARNING: Failed to copy time buffer, error: ", GetLastError());
       return false;
-   }
 
-   // Search from bar 2 (the earliest bar that can be a confirmed 5-bar fractal)
-   for(int i = 2; i < count; i++)
+   // Search from bar 1 backwards.
+   // Catches any active fractal arrow on the chart
+   for(int i = 1; i < count; i++)
    {
-      if(fractalBuf[i] != EMPTY_VALUE && fractalBuf[i] != 0.0)
+      if(fractalBuf[i] != EMPTY_VALUE && fractalBuf[i] > 0.0 && fractalBuf[i] < 10000000.0)
       {
          fractalPrice = fractalBuf[i];
          fractalTime  = timeBuf[i];
@@ -108,27 +99,47 @@ bool GetLatestFractal(int bufferIndex, double &fractalPrice, datetime &fractalTi
    return false;
 }
 
-// Take a chart screenshot saved to MQL5/Files/ and return the filename
+// Take a chart screenshot saved to MQL5/Files/ and wait until file is ready
 string TakeChartScreenshot()
 {
-   // Build filename with rotation (fractal_0.png ... fractal_9.png)
    int fileIndex = m_imageCounter % InpMaxImages;
    string filename = "fractal_" + IntegerToString(fileIndex) + ".png";
 
-   // Delete the old file if it exists (rotation cleanup)
+   // Delete old file in slot if it exists
    if(FileIsExist(filename))
       FileDelete(filename);
 
-   // Capture chart screenshot
-   if(!ChartScreenShot(0, filename, InpChartWidth, InpChartHeight))
+   // Request chart screenshot (asynchronous queue in MT5 chart engine)
+   if(!ChartScreenShot(0, filename, InpChartWidth, InpChartHeight, CHART_SCALE_DEFAULT))
    {
-      Print("ERROR: ChartScreenShot failed. Code: ", GetLastError());
+      Print("WARNING: ChartScreenShot request failed. Code: ", GetLastError());
       return "";
    }
 
    m_imageCounter++;
-   Print("Screenshot saved: ", filename, " (slot ", fileIndex, "/", InpMaxImages, ")");
-   return filename;
+
+   // Wait for MT5 chart thread to finish rendering and writing file to disk (up to 2 seconds)
+   for(int attempt = 0; attempt < 20; attempt++)
+   {
+      Sleep(100);
+      if(FileIsExist(filename))
+      {
+         int h = FileOpen(filename, FILE_READ | FILE_BIN);
+         if(h != INVALID_HANDLE)
+         {
+            ulong sz = FileSize(h);
+            FileClose(h);
+            if(sz > 0)
+            {
+               Print("Screenshot ready: ", filename, " (", sz, " bytes, slot ", fileIndex, "/", InpMaxImages, ")");
+               return filename;
+            }
+         }
+      }
+   }
+
+   Print("WARNING: Screenshot timed out waiting for file write: ", filename);
+   return "";
 }
 
 // Send a text message to Telegram
@@ -144,17 +155,16 @@ bool SendTelegramText(string message)
    string resultHeaders;
 
    StringToCharArray(postData, postArray, 0, WHOLE_ARRAY, CP_UTF8);
-   // Remove null terminator that StringToCharArray appends
-   ArrayResize(postArray, ArraySize(postArray) - 1);
+   ArrayResize(postArray, ArraySize(postArray) - 1); // Remove null terminator
+
+   string headers = "Content-Type: application/x-www-form-urlencoded\r\n";
 
    int res = WebRequest(
       "POST",
       url,
-      "Content-Type: application/x-www-form-urlencoded\r\n",
-      NULL,
-      5000,
+      headers,
+      10000,
       postArray,
-      ArraySize(postArray),
       resultArray,
       resultHeaders
    );
@@ -162,7 +172,7 @@ bool SendTelegramText(string message)
    if(res != 200)
    {
       string response = CharArrayToString(resultArray, 0, WHOLE_ARRAY, CP_UTF8);
-      Print("Telegram sendMessage failed. HTTP ", res, " | ", response);
+      Print("Telegram sendMessage failed. HTTP ", res, " | ", response, " | Code: ", GetLastError());
       return false;
    }
 
@@ -174,22 +184,27 @@ bool SendTelegramPhoto(string filename, string caption)
 {
    string url = "https://api.telegram.org/bot" + InpTelegramToken + "/sendPhoto";
 
-   // Read the image file from MQL5/Files/
    int fileHandle = FileOpen(filename, FILE_READ | FILE_BIN);
    if(fileHandle == INVALID_HANDLE)
    {
-      Print("ERROR: Cannot open file ", filename, " for Telegram upload.");
+      Print("ERROR: Cannot open file ", filename, " for Telegram upload. Code: ", GetLastError());
       return false;
    }
 
    int fileSize = (int)FileSize(fileHandle);
+   if(fileSize <= 0)
+   {
+      FileClose(fileHandle);
+      Print("ERROR: File ", filename, " is empty.");
+      return false;
+   }
+
    char fileData[];
    ArrayResize(fileData, fileSize);
    FileReadArray(fileHandle, fileData, 0, fileSize);
    FileClose(fileHandle);
 
-   // Build multipart/form-data body manually
-   string boundary = "----MQL5FractalAlert";
+   string boundary = "----MQL5FractalAlert" + IntegerToString((int)TimeLocal());
    string crlf = "\r\n";
 
    // Part 1: chat_id
@@ -212,18 +227,15 @@ bool SendTelegramPhoto(string filename, string caption)
    body += "Content-Disposition: form-data; name=\"photo\"; filename=\"" + filename + "\"" + crlf;
    body += "Content-Type: image/png" + crlf + crlf;
 
-   // Convert text parts to char array
    char bodyStart[];
    StringToCharArray(body, bodyStart, 0, WHOLE_ARRAY, CP_UTF8);
-   ArrayResize(bodyStart, ArraySize(bodyStart) - 1); // Remove null terminator
+   ArrayResize(bodyStart, ArraySize(bodyStart) - 1);
 
-   // Build closing boundary
    string closingStr = crlf + "--" + boundary + "--" + crlf;
    char bodyEnd[];
    StringToCharArray(closingStr, bodyEnd, 0, WHOLE_ARRAY, CP_UTF8);
    ArrayResize(bodyEnd, ArraySize(bodyEnd) - 1);
 
-   // Combine: bodyStart + fileData + bodyEnd
    char postData[];
    int totalSize = ArraySize(bodyStart) + ArraySize(fileData) + ArraySize(bodyEnd);
    ArrayResize(postData, totalSize);
@@ -235,7 +247,6 @@ bool SendTelegramPhoto(string filename, string caption)
    offset += ArraySize(fileData);
    ArrayCopy(postData, bodyEnd, offset);
 
-   // Send request
    char resultArray[];
    string resultHeaders;
    string headers = "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n";
@@ -244,10 +255,8 @@ bool SendTelegramPhoto(string filename, string caption)
       "POST",
       url,
       headers,
-      NULL,
-      10000,
+      15000,
       postData,
-      totalSize,
       resultArray,
       resultHeaders
    );
@@ -255,7 +264,7 @@ bool SendTelegramPhoto(string filename, string caption)
    if(res != 200)
    {
       string response = CharArrayToString(resultArray, 0, WHOLE_ARRAY, CP_UTF8);
-      Print("Telegram sendPhoto failed. HTTP ", res, " | ", response);
+      Print("Telegram sendPhoto failed. HTTP ", res, " | Response: ", response, " | Code: ", GetLastError());
       return false;
    }
 
@@ -266,28 +275,28 @@ bool SendTelegramPhoto(string filename, string caption)
 // Expert tick function
 void OnTick()
 {
-   // New bar check — only check for fractals once per bar
-   datetime currentBarTime = iTime(_Symbol, _Period, 0);
-   if(currentBarTime == m_lastBarTime)
-      return;
-
-   // On first run, initialize timestamps to the current latest fractals so it doesn't alert on historical ones
+   // On first run, wait until indicator buffer is ready, then initialize baseline
    if(m_lastBarTime == 0)
    {
-      m_lastBarTime = currentBarTime;
       double dummyPrice;
       datetime initUpperTime = 0, initLowerTime = 0;
-      if(GetLatestFractal(0, dummyPrice, initUpperTime))
-         m_lastUpperFractalTime = initUpperTime;
-      if(GetLatestFractal(1, dummyPrice, initLowerTime))
-         m_lastLowerFractalTime = initLowerTime;
+      bool upperOk = GetLatestFractal(0, dummyPrice, initUpperTime);
+      bool lowerOk = GetLatestFractal(1, dummyPrice, initLowerTime);
 
-      Print("Initialized fractal baseline. Upper time: ", TimeToString(m_lastUpperFractalTime), 
-            ", Lower time: ", TimeToString(m_lastLowerFractalTime));
+      if(!upperOk && !lowerOk)
+      {
+         // Wait for indicator buffer calculation
+         return;
+      }
+
+      m_lastUpperFractalTime = initUpperTime;
+      m_lastLowerFractalTime = initLowerTime;
+      m_lastBarTime = iTime(_Symbol, _Period, 0);
+
+      Print("Initialized fractal baseline. Upper bar: ", TimeToString(m_lastUpperFractalTime),
+            ", Lower bar: ", TimeToString(m_lastLowerFractalTime));
       return;
    }
-
-   m_lastBarTime = currentBarTime;
 
    // Check for NEW Upper Fractal (bearish arrow on high)
    double upperPrice = 0.0;
@@ -302,18 +311,23 @@ void OnTick()
                         + "Symbol: " + _Symbol + "\n"
                         + "Timeframe: " + EnumToString(_Period) + "\n"
                         + "Fractal High: " + DoubleToString(upperPrice, _Digits) + "\n"
-                        + "Fractal Bar Time: " + TimeToString(upperTime, TIME_DATE | TIME_MINUTES) + "\n"
+                        + "Fractal Bar: " + TimeToString(upperTime, TIME_DATE | TIME_MINUTES) + "\n"
                         + "Current Bid: " + DoubleToString(SymbolInfoDouble(_Symbol, SYMBOL_BID), _Digits) + "\n"
                         + "Alert Time: " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
 
-         Print("New Upper Fractal detected at price ", upperPrice, " on bar ", TimeToString(upperTime));
+         Print(">>> NEW Upper Fractal detected at price ", upperPrice, " on bar ", TimeToString(upperTime));
 
-         // Take screenshot and send to Telegram
+         // Try sending screenshot photo, fallback to text if photo fails
+         bool sent = false;
          string screenshotFile = TakeChartScreenshot();
          if(screenshotFile != "")
-            SendTelegramPhoto(screenshotFile, message);
-         else
+            sent = SendTelegramPhoto(screenshotFile, message);
+
+         if(!sent)
+         {
+            Print("Falling back to text message alert...");
             SendTelegramText(message);
+         }
       }
    }
 
@@ -330,18 +344,23 @@ void OnTick()
                         + "Symbol: " + _Symbol + "\n"
                         + "Timeframe: " + EnumToString(_Period) + "\n"
                         + "Fractal Low: " + DoubleToString(lowerPrice, _Digits) + "\n"
-                        + "Fractal Bar Time: " + TimeToString(lowerTime, TIME_DATE | TIME_MINUTES) + "\n"
+                        + "Fractal Bar: " + TimeToString(lowerTime, TIME_DATE | TIME_MINUTES) + "\n"
                         + "Current Ask: " + DoubleToString(SymbolInfoDouble(_Symbol, SYMBOL_ASK), _Digits) + "\n"
                         + "Alert Time: " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
 
-         Print("New Lower Fractal detected at price ", lowerPrice, " on bar ", TimeToString(lowerTime));
+         Print(">>> NEW Lower Fractal detected at price ", lowerPrice, " on bar ", TimeToString(lowerTime));
 
-         // Take screenshot and send to Telegram
+         // Try sending screenshot photo, fallback to text if photo fails
+         bool sent = false;
          string screenshotFile = TakeChartScreenshot();
          if(screenshotFile != "")
-            SendTelegramPhoto(screenshotFile, message);
-         else
+            sent = SendTelegramPhoto(screenshotFile, message);
+
+         if(!sent)
+         {
+            Print("Falling back to text message alert...");
             SendTelegramText(message);
+         }
       }
    }
 }
