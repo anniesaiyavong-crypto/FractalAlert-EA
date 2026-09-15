@@ -310,6 +310,7 @@ void OnTick()
          string message = "<b>Fractal Alert: BEARISH (Upper)</b>\n"
                         + "Symbol: " + _Symbol + "\n"
                         + "Timeframe: " + EnumToString(_Period) + "\n"
+                        + "----------" + "\n"
                         + "Fractal High: " + DoubleToString(upperPrice, _Digits) + "\n"
                         + "Fractal Bar: " + TimeToString(upperTime, TIME_DATE | TIME_MINUTES) + "\n"
                         + "Current Bid: " + DoubleToString(SymbolInfoDouble(_Symbol, SYMBOL_BID), _Digits) + "\n"
