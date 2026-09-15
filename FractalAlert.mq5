@@ -18,9 +18,9 @@ input int      InpMaxImages         = 10;      // Max stored screenshots before 
 // Global Variables
 int            m_fractalHandle;
 datetime       m_lastBarTime;
-int            m_imageCounter;      // Tracks total screenshots taken (for rotation)
-double         m_lastUpperFractal;  // Last alerted upper fractal price (avoid duplicate alerts)
-double         m_lastLowerFractal;  // Last alerted lower fractal price
+int            m_imageCounter;           // Tracks total screenshots taken (for rotation)
+datetime       m_lastUpperFractalTime;   // Bar time of last alerted upper fractal
+datetime       m_lastLowerFractalTime;   // Bar time of last alerted lower fractal
 
 // Expert initialization function
 int OnInit()
@@ -42,8 +42,8 @@ int OnInit()
 
    m_lastBarTime = 0;
    m_imageCounter = 0;
-   m_lastUpperFractal = 0.0;
-   m_lastLowerFractal = 0.0;
+   m_lastUpperFractalTime = 0;
+   m_lastLowerFractalTime = 0;
 
    Print("FractalAlert initialized on ", _Symbol, " ", EnumToString(_Period));
    Print("  Telegram Chat ID: ", InpTelegramChatID);
@@ -64,31 +64,48 @@ void OnDeinit(const int reason)
    Print("FractalAlert deinitialized. Reason: ", reason);
 }
 
-// Find the most recent confirmed fractal price level
+// Find the most recent confirmed fractal price and bar time
 // bufferIndex: 0 = Upper Fractal (high), 1 = Lower Fractal (low)
-// Returns 0.0 if no fractal found within lookback range
-double FindLastFractal(int bufferIndex)
+// Returns true if a confirmed fractal was found within lookback
+bool GetLatestFractal(int bufferIndex, double &fractalPrice, datetime &fractalTime)
 {
    double fractalBuf[];
    ArraySetAsSeries(fractalBuf, true);
 
-   // Start from index 2 (fractals need 2 bars after the peak/valley to confirm)
-   int startBar = 2;
-   int count = InpFractalLookback;
+   datetime timeBuf[];
+   ArraySetAsSeries(timeBuf, true);
 
-   if(CopyBuffer(m_fractalHandle, bufferIndex, startBar, count, fractalBuf) < count)
+   int count = InpFractalLookback;
+   if(count < 5) count = 5;
+
+   // Copy buffer starting from bar 0 with AsSeries = true
+   // index 0 = current open bar
+   // index 1 = previous closed bar
+   // index 2 = confirmed fractal candidate bar
+   if(CopyBuffer(m_fractalHandle, bufferIndex, 0, count, fractalBuf) < count)
    {
-      Print("WARNING: Failed to copy fractal buffer ", bufferIndex);
-      return 0.0;
+      Print("WARNING: Failed to copy fractal buffer ", bufferIndex, ", error: ", GetLastError());
+      return false;
    }
 
-   for(int i = 0; i < count; i++)
+   if(CopyTime(_Symbol, _Period, 0, count, timeBuf) < count)
+   {
+      Print("WARNING: Failed to copy time buffer, error: ", GetLastError());
+      return false;
+   }
+
+   // Search from bar 2 (the earliest bar that can be a confirmed 5-bar fractal)
+   for(int i = 2; i < count; i++)
    {
       if(fractalBuf[i] != EMPTY_VALUE && fractalBuf[i] != 0.0)
-         return fractalBuf[i];
+      {
+         fractalPrice = fractalBuf[i];
+         fractalTime  = timeBuf[i];
+         return true;
+      }
    }
 
-   return 0.0;
+   return false;
 }
 
 // Take a chart screenshot saved to MQL5/Files/ and return the filename
@@ -253,53 +270,78 @@ void OnTick()
    datetime currentBarTime = iTime(_Symbol, _Period, 0);
    if(currentBarTime == m_lastBarTime)
       return;
-   m_lastBarTime = currentBarTime;
 
-   // Find the latest confirmed fractals
-   double upperFractal = FindLastFractal(0); // Upper Fractal (bearish arrow on high)
-   double lowerFractal = FindLastFractal(1); // Lower Fractal (bullish arrow on low)
-
-   // Check for NEW Upper Fractal (different from last alerted)
-   if(upperFractal > 0.0 && upperFractal != m_lastUpperFractal)
+   // On first run, initialize timestamps to the current latest fractals so it doesn't alert on historical ones
+   if(m_lastBarTime == 0)
    {
-      m_lastUpperFractal = upperFractal;
+      m_lastBarTime = currentBarTime;
+      double dummyPrice;
+      datetime initUpperTime = 0, initLowerTime = 0;
+      if(GetLatestFractal(0, dummyPrice, initUpperTime))
+         m_lastUpperFractalTime = initUpperTime;
+      if(GetLatestFractal(1, dummyPrice, initLowerTime))
+         m_lastLowerFractalTime = initLowerTime;
 
-      string message = "<b>Fractal Alert: BEARISH (Upper)</b>\n"
-                     + "Symbol: " + _Symbol + "\n"
-                     + "Timeframe: " + EnumToString(_Period) + "\n"
-                     + "Fractal High: " + DoubleToString(upperFractal, _Digits) + "\n"
-                     + "Current Bid: " + DoubleToString(SymbolInfoDouble(_Symbol, SYMBOL_BID), _Digits) + "\n"
-                     + "Time: " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
-
-      Print("Upper Fractal detected at ", upperFractal);
-
-      // Take screenshot and send to Telegram
-      string screenshotFile = TakeChartScreenshot();
-      if(screenshotFile != "")
-         SendTelegramPhoto(screenshotFile, message);
-      else
-         SendTelegramText(message); // Fallback to text-only if screenshot fails
+      Print("Initialized fractal baseline. Upper time: ", TimeToString(m_lastUpperFractalTime), 
+            ", Lower time: ", TimeToString(m_lastLowerFractalTime));
+      return;
    }
 
-   // Check for NEW Lower Fractal (different from last alerted)
-   if(lowerFractal > 0.0 && lowerFractal != m_lastLowerFractal)
+   m_lastBarTime = currentBarTime;
+
+   // Check for NEW Upper Fractal (bearish arrow on high)
+   double upperPrice = 0.0;
+   datetime upperTime = 0;
+   if(GetLatestFractal(0, upperPrice, upperTime))
    {
-      m_lastLowerFractal = lowerFractal;
+      if(upperTime > m_lastUpperFractalTime)
+      {
+         m_lastUpperFractalTime = upperTime;
 
-      string message = "<b>Fractal Alert: BULLISH (Lower)</b>\n"
-                     + "Symbol: " + _Symbol + "\n"
-                     + "Timeframe: " + EnumToString(_Period) + "\n"
-                     + "Fractal Low: " + DoubleToString(lowerFractal, _Digits) + "\n"
-                     + "Current Ask: " + DoubleToString(SymbolInfoDouble(_Symbol, SYMBOL_ASK), _Digits) + "\n"
-                     + "Time: " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
+         string message = "<b>Fractal Alert: BEARISH (Upper)</b>\n"
+                        + "Symbol: " + _Symbol + "\n"
+                        + "Timeframe: " + EnumToString(_Period) + "\n"
+                        + "Fractal High: " + DoubleToString(upperPrice, _Digits) + "\n"
+                        + "Fractal Bar Time: " + TimeToString(upperTime, TIME_DATE | TIME_MINUTES) + "\n"
+                        + "Current Bid: " + DoubleToString(SymbolInfoDouble(_Symbol, SYMBOL_BID), _Digits) + "\n"
+                        + "Alert Time: " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
 
-      Print("Lower Fractal detected at ", lowerFractal);
+         Print("New Upper Fractal detected at price ", upperPrice, " on bar ", TimeToString(upperTime));
 
-      // Take screenshot and send to Telegram
-      string screenshotFile = TakeChartScreenshot();
-      if(screenshotFile != "")
-         SendTelegramPhoto(screenshotFile, message);
-      else
-         SendTelegramText(message);
+         // Take screenshot and send to Telegram
+         string screenshotFile = TakeChartScreenshot();
+         if(screenshotFile != "")
+            SendTelegramPhoto(screenshotFile, message);
+         else
+            SendTelegramText(message);
+      }
+   }
+
+   // Check for NEW Lower Fractal (bullish arrow on low)
+   double lowerPrice = 0.0;
+   datetime lowerTime = 0;
+   if(GetLatestFractal(1, lowerPrice, lowerTime))
+   {
+      if(lowerTime > m_lastLowerFractalTime)
+      {
+         m_lastLowerFractalTime = lowerTime;
+
+         string message = "<b>Fractal Alert: BULLISH (Lower)</b>\n"
+                        + "Symbol: " + _Symbol + "\n"
+                        + "Timeframe: " + EnumToString(_Period) + "\n"
+                        + "Fractal Low: " + DoubleToString(lowerPrice, _Digits) + "\n"
+                        + "Fractal Bar Time: " + TimeToString(lowerTime, TIME_DATE | TIME_MINUTES) + "\n"
+                        + "Current Ask: " + DoubleToString(SymbolInfoDouble(_Symbol, SYMBOL_ASK), _Digits) + "\n"
+                        + "Alert Time: " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
+
+         Print("New Lower Fractal detected at price ", lowerPrice, " on bar ", TimeToString(lowerTime));
+
+         // Take screenshot and send to Telegram
+         string screenshotFile = TakeChartScreenshot();
+         if(screenshotFile != "")
+            SendTelegramPhoto(screenshotFile, message);
+         else
+            SendTelegramText(message);
+      }
    }
 }

@@ -57,3 +57,6 @@ docker exec -u root mt5_headless chown -R root:root /root/.wine
 ```
 # Compile the EA using MetaEditor
 This process can be done by the MetaEditor GUI
+
+go to mt5 -> Tools -> expert and paste this url to allowed web requestes
+https://api.telegram.org
