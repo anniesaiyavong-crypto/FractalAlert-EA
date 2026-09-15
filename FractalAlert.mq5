@@ -110,7 +110,7 @@ string TakeChartScreenshot()
       FileDelete(filename);
 
    // Request chart screenshot (asynchronous queue in MT5 chart engine)
-   if(!ChartScreenShot(0, filename, InpChartWidth, InpChartHeight, CHART_SCALE_DEFAULT))
+   if(!ChartScreenShot(0, filename, InpChartWidth, InpChartHeight, ALIGN_RIGHT))
    {
       Print("WARNING: ChartScreenShot request failed. Code: ", GetLastError());
       return "";
@@ -343,6 +343,7 @@ void OnTick()
          string message = "<b>Fractal Alert: BULLISH (Lower)</b>\n"
                         + "Symbol: " + _Symbol + "\n"
                         + "Timeframe: " + EnumToString(_Period) + "\n"
+                        + "----------" + "\n"
                         + "Fractal Low: " + DoubleToString(lowerPrice, _Digits) + "\n"
                         + "Fractal Bar: " + TimeToString(lowerTime, TIME_DATE | TIME_MINUTES) + "\n"
                         + "Current Ask: " + DoubleToString(SymbolInfoDouble(_Symbol, SYMBOL_ASK), _Digits) + "\n"

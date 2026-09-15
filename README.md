@@ -58,5 +58,29 @@ docker exec -u root mt5_headless chown -R root:root /root/.wine
 # Compile the EA using MetaEditor
 This process can be done by the MetaEditor GUI
 
-go to mt5 -> Tools -> expert and paste this url to allowed web requestes
+## Telegram Alert Configuration
+
+### 1. Enable WebRequest in MetaTrader 5
+
+Allow the Expert Advisor to send HTTP requests to the Telegram API:
+
+1. Open MT5 and navigate to **Tools** -> **Options** (or press `Ctrl+O`).
+2. Switch to the **Experts** tab.
+3. Check **Allow WebRequest for listed URL:**.
+4. Add the Telegram API URL:
+
+```text
 https://api.telegram.org
+```
+
+> [!NOTE]
+> MT5 will block outbound HTTPS requests if this URL is not explicitly whitelisted.
+
+### 2. Configure EA Input Parameters
+
+Attach the Expert Advisor to a chart, open the **Inputs** tab, and enter your Telegram credentials:
+
+| Parameter | Type | Description | Source / Format |
+| :--- | :--- | :--- | :--- |
+| `InpTelegramToken` | String | Bot Authentication Token | Created via `@BotFather` |
+| `InpTelegramChatID` | String | Telegram User or Group Chat ID | Numeric ID (e.g. `123456789` or `-100...`) |
