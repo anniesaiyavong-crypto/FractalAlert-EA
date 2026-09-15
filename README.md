@@ -42,10 +42,18 @@ To stop the container:
 ```bash
 docker compose down
 ```
-# Directory overview
+## Directory overview
 ```
 ├── Dockerfile
 ├── docker-compose.yml
 ├── entrypoint.sh
 └── mt5_data/             <-- Wine directory (contains MT5, EAs, & configs)
 ```
+## Copy the EA file to the MT5 Experts folder
+```bash
+sudo chown -R $USER:$USER mt5_data
+cp FractalBreakoutEA.mq5 mt5_data/drive_c/Program\ Files/MetaTrader\ 5/MQL5/Experts/
+docker exec -u root mt5_headless chown -R root:root /root/.wine
+```
+# Compile the EA using MetaEditor
+This process can be done by the MetaEditor GUI
