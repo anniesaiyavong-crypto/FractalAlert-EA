@@ -52,7 +52,7 @@ docker compose down
 ## Copy the EA file to the MT5 Experts folder
 ```bash
 sudo chown -R $USER:$USER mt5_data
-cp FractalBreakoutEA.mq5 mt5_data/drive_c/Program\ Files/MetaTrader\ 5/MQL5/Experts/
+cp FractalAlert.mq5 mt5_data/drive_c/Program\ Files/MetaTrader\ 5/MQL5/Experts/
 docker exec -u root mt5_headless chown -R root:root /root/.wine
 ```
 # Compile the EA using MetaEditor
