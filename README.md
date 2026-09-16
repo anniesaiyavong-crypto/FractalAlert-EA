@@ -1,7 +1,7 @@
 
-# Headless Trading Bot Setup
+# Headless Metatrader 5 
 
-This guide explains how to set up MetaTrader 5 and run a trading bot headlessly inside local/cloud machine using Docker.
+This guide shows how to set up MetaTrader 5 and run an EA headlessly inside a local or cloud machine using Docker.
 
 ## Build and run
 
