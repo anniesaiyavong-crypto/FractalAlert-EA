@@ -36,12 +36,6 @@ DISPLAY=:99 wine /tmp/mt5setup.exe
 
 Connect to the VNC server with a VNC client to complete the MetaTrader 5 setup wizard.
 
-
-To stop the container:
-
-```bash
-docker compose down
-```
 ## Directory overview
 ```
 ├── Dockerfile
