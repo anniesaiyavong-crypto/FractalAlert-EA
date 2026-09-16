@@ -1,7 +1,9 @@
 
 # Headless Metatrader 5 
 
-This guide shows how to set up MetaTrader 5 and run an EA headlessly inside a local or cloud machine using Docker.
+This guide shows how to set up MetaTrader 5 and run an EA headlessly inside a local or cloud machine using Docker
+System Requirement:
+RAM: 1GB minimum.
 
 ## Build and run
 
