@@ -10,3 +10,4 @@ services:
     environment:
       - DISPLAY=:99
       - SCREEN_SIZE=1280x1024x24
+    restart: unless-stopped
