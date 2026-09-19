@@ -1,6 +1,6 @@
 // Detects confirmed Bill Williams Fractals and sends Telegram alerts with chart screenshots
 #property copyright "Asanay"
-#property version   "1.2"
+#property version   "1.3"
 
 // Input Parameters
 input group "--- Telegram Settings ---"
@@ -10,6 +10,13 @@ input string   InpTelegramChatID    = "";      // Chat ID (user or group)
 input group "--- Fractal Settings ---"
 input int      InpFractalLookback   = 50;      // Max bars to search for confirmed fractal
 
+input group "--- ATR Settings ---"
+input int      InpATRPeriod         = 14;      // ATR Period (default: 14)
+
+input group "--- Message Settings ---"
+input bool     InpShowPrice         = false;   // Include price in alert (e.g. M5 2650.50)
+input bool     InpShowSymbol        = false;   // Include symbol in alert (e.g. XAUUSD M5)
+
 input group "--- Screenshot Settings ---"
 input int      InpChartWidth        = 1280;    // Screenshot Width (px)
 input int      InpChartHeight       = 720;     // Screenshot Height (px)
@@ -17,10 +24,20 @@ input int      InpMaxImages         = 10;      // Max stored screenshots before 
 
 // Global Variables
 int            m_fractalHandle;
+int            m_atrHandle;
 datetime       m_lastBarTime;
 int            m_imageCounter;           // Tracks total screenshots taken (for rotation)
 datetime       m_lastUpperFractalTime;   // Bar time of last alerted upper fractal
 datetime       m_lastLowerFractalTime;   // Bar time of last alerted lower fractal
+
+// Helper function to format timeframe cleanly (e.g. PERIOD_M5 -> M5)
+string GetPeriodString(ENUM_TIMEFRAMES period)
+{
+   string s = EnumToString(period);
+   if(StringFind(s, "PERIOD_") == 0)
+      return StringSubstr(s, 7);
+   return s;
+}
 
 // Expert initialization function
 int OnInit()
@@ -40,17 +57,26 @@ int OnInit()
       return INIT_FAILED;
    }
 
+   // Create ATR handle
+   m_atrHandle = iATR(_Symbol, _Period, InpATRPeriod);
+   if(m_atrHandle == INVALID_HANDLE)
+   {
+      Print("ERROR: Failed to create ATR handle. Code: ", GetLastError());
+      return INIT_FAILED;
+   }
+
    m_lastBarTime          = 0;
    m_imageCounter         = 0;
    m_lastUpperFractalTime = 0;
    m_lastLowerFractalTime = 0;
 
-   Print("FractalAlert initialized on ", _Symbol, " ", EnumToString(_Period));
+   Print("FractalAlert initialized on ", _Symbol, " ", GetPeriodString(_Period));
+   Print("  ATR Period: ", InpATRPeriod);
    Print("  Telegram Chat ID: ", InpTelegramChatID);
    Print("  Max screenshots: ", InpMaxImages);
 
    // Send startup message
-   SendTelegramText("FractalAlert EA started on " + _Symbol + " " + EnumToString(_Period));
+   SendTelegramText("FractalAlert EA started on " + _Symbol + " " + GetPeriodString(_Period));
 
    return INIT_SUCCEEDED;
 }
@@ -61,7 +87,20 @@ void OnDeinit(const int reason)
    if(m_fractalHandle != INVALID_HANDLE)
       IndicatorRelease(m_fractalHandle);
 
+   if(m_atrHandle != INVALID_HANDLE)
+      IndicatorRelease(m_atrHandle);
+
    Print("FractalAlert deinitialized. Reason: ", reason);
+}
+
+// Get current ATR value
+double GetCurrentATR()
+{
+   double atrBuf[];
+   ArraySetAsSeries(atrBuf, true);
+   if(CopyBuffer(m_atrHandle, 0, 0, 1, atrBuf) < 1)
+      return 0.0;
+   return atrBuf[0];
 }
 
 // Find the most recent confirmed fractal price and bar time
@@ -307,16 +346,16 @@ void OnTick()
       {
          m_lastUpperFractalTime = upperTime;
 
-         string message = "<b>Fractal Alert: BEARISH (Upper)</b>\n"
-                        + "Symbol: " + _Symbol + "\n"
-                        + "Timeframe: " + EnumToString(_Period) + "\n"
-                        + "----------" + "\n"
-                        + "Fractal High: " + DoubleToString(upperPrice, _Digits) + "\n"
-                        + "Fractal Bar: " + TimeToString(upperTime, TIME_DATE | TIME_MINUTES) + "\n"
-                        + "Current Bid: " + DoubleToString(SymbolInfoDouble(_Symbol, SYMBOL_BID), _Digits) + "\n"
-                        + "Alert Time: " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
+         double atr = GetCurrentATR();
+         string tfStr = GetPeriodString(_Period);
 
-         Print(">>> NEW Upper Fractal detected at price ", upperPrice, " on bar ", TimeToString(upperTime));
+         string message = "HIGH-" + DoubleToString(atr, 2) + "\n" + tfStr;
+         if(InpShowSymbol)
+            message = "HIGH-" + DoubleToString(atr, 2) + "\n" + _Symbol + " " + tfStr;
+         if(InpShowPrice)
+            message += " " + DoubleToString(upperPrice, _Digits);
+
+         Print(">>> NEW Upper Fractal at ", upperPrice, " on bar ", TimeToString(upperTime), " (ATR: ", DoubleToString(atr, 2), ")");
 
          // Try sending screenshot photo, fallback to text if photo fails
          bool sent = false;
@@ -341,16 +380,16 @@ void OnTick()
       {
          m_lastLowerFractalTime = lowerTime;
 
-         string message = "<b>Fractal Alert: BULLISH (Lower)</b>\n"
-                        + "Symbol: " + _Symbol + "\n"
-                        + "Timeframe: " + EnumToString(_Period) + "\n"
-                        + "----------" + "\n"
-                        + "Fractal Low: " + DoubleToString(lowerPrice, _Digits) + "\n"
-                        + "Fractal Bar: " + TimeToString(lowerTime, TIME_DATE | TIME_MINUTES) + "\n"
-                        + "Current Ask: " + DoubleToString(SymbolInfoDouble(_Symbol, SYMBOL_ASK), _Digits) + "\n"
-                        + "Alert Time: " + TimeToString(TimeCurrent(), TIME_DATE | TIME_SECONDS);
+         double atr = GetCurrentATR();
+         string tfStr = GetPeriodString(_Period);
 
-         Print(">>> NEW Lower Fractal detected at price ", lowerPrice, " on bar ", TimeToString(lowerTime));
+         string message = "LOW-" + DoubleToString(atr, 2) + "\n" + tfStr;
+         if(InpShowSymbol)
+            message = "LOW-" + DoubleToString(atr, 2) + "\n" + _Symbol + " " + tfStr;
+         if(InpShowPrice)
+            message += " " + DoubleToString(lowerPrice, _Digits);
+
+         Print(">>> NEW Lower Fractal at ", lowerPrice, " on bar ", TimeToString(lowerTime), " (ATR: ", DoubleToString(atr, 2), ")");
 
          // Try sending screenshot photo, fallback to text if photo fails
          bool sent = false;
