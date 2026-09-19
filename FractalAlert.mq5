@@ -1,26 +1,30 @@
 // Detects confirmed Bill Williams Fractals and sends Telegram alerts with chart screenshots
 #property copyright "Asanay"
-#property version   "1.3"
+#property version   "1.4"
 
 // Input Parameters
 input group "--- Telegram Settings ---"
-input string   InpTelegramToken     = "";      // Bot Token (from @BotFather)
-input string   InpTelegramChatID    = "";      // Chat ID (user or group)
+input string   InpTelegramToken        = "";      // Bot Token (from @BotFather)
+input string   InpTelegramChatID       = "";      // Chat ID (user or group)
 
 input group "--- Fractal Settings ---"
-input int      InpFractalLookback   = 50;      // Max bars to search for confirmed fractal
+input int      InpFractalLookback      = 50;      // Max bars to search for confirmed fractal
 
 input group "--- ATR Settings ---"
-input int      InpATRPeriod         = 14;      // ATR Period (default: 14)
+input int      InpATRPeriod            = 14;      // ATR Period (default: 14)
+
+input group "--- Breakout Alert Settings ---"
+input bool     InpEnableBreakoutAlert  = false;   // Enable Breakout Alert (default: false)
+input double   InpBreakoutDistancePips = 0.0;     // Range beyond fractal before alert (pips, default: 0)
 
 input group "--- Message Settings ---"
-input bool     InpShowPrice         = false;   // Include price in alert (e.g. M5 2650.50)
-input bool     InpShowSymbol        = false;   // Include symbol in alert (e.g. XAUUSD M5)
+input bool     InpShowPrice            = false;   // Include price in alert (e.g. M5 2650.50)
+input bool     InpShowSymbol           = false;   // Include symbol in alert (e.g. XAUUSD M5)
 
 input group "--- Screenshot Settings ---"
-input int      InpChartWidth        = 1280;    // Screenshot Width (px)
-input int      InpChartHeight       = 720;     // Screenshot Height (px)
-input int      InpMaxImages         = 10;      // Max stored screenshots before deleting oldest
+input int      InpChartWidth           = 1280;    // Screenshot Width (px)
+input int      InpChartHeight          = 720;     // Screenshot Height (px)
+input int      InpMaxImages            = 10;      // Max stored screenshots before deleting oldest
 
 // Global Variables
 int            m_fractalHandle;
@@ -30,6 +34,15 @@ int            m_imageCounter;           // Tracks total screenshots taken (for 
 datetime       m_lastUpperFractalTime;   // Bar time of last alerted upper fractal
 datetime       m_lastLowerFractalTime;   // Bar time of last alerted lower fractal
 
+// Active High/Low Fractal References for Breakout Detection
+double         m_refHighPrice;           // Price of the latest high fractal reference
+datetime       m_refHighTime;            // Time of the latest high fractal reference
+bool           m_highBreakoutAlerted;    // True if breakout alert already fired for current ref high
+
+double         m_refLowPrice;            // Price of the latest low fractal reference
+datetime       m_refLowTime;             // Time of the latest low fractal reference
+bool           m_lowBreakoutAlerted;     // True if breakout alert already fired for current ref low
+
 // Helper function to format timeframe cleanly (e.g. PERIOD_M5 -> M5)
 string GetPeriodString(ENUM_TIMEFRAMES period)
 {
@@ -37,6 +50,20 @@ string GetPeriodString(ENUM_TIMEFRAMES period)
    if(StringFind(s, "PERIOD_") == 0)
       return StringSubstr(s, 7);
    return s;
+}
+
+// Calculate pip size across symbols
+double GetPipSize()
+{
+   if(_Digits == 3 || _Digits == 5 || _Digits == 2)
+      return _Point * 10.0;
+   return _Point;
+}
+
+// Calculate breakout buffer offset in quote currency price
+double GetBreakoutOffset()
+{
+   return InpBreakoutDistancePips * GetPipSize();
 }
 
 // Expert initialization function
@@ -70,8 +97,17 @@ int OnInit()
    m_lastUpperFractalTime = 0;
    m_lastLowerFractalTime = 0;
 
+   m_refHighPrice         = 0.0;
+   m_refHighTime          = 0;
+   m_highBreakoutAlerted  = false;
+
+   m_refLowPrice          = 0.0;
+   m_refLowTime           = 0;
+   m_lowBreakoutAlerted   = false;
+
    Print("FractalAlert initialized on ", _Symbol, " ", GetPeriodString(_Period));
    Print("  ATR Period: ", InpATRPeriod);
+   Print("  Breakout Alert: ", (InpEnableBreakoutAlert ? "ENABLED" : "DISABLED"), " (Offset: ", InpBreakoutDistancePips, " pips)");
    Print("  Telegram Chat ID: ", InpTelegramChatID);
    Print("  Max screenshots: ", InpMaxImages);
 
@@ -311,16 +347,31 @@ bool SendTelegramPhoto(string filename, string caption)
    return true;
 }
 
+// Unified helper to send screenshot photo with fallback to text
+void SendAlertNotification(string message)
+{
+   bool sent = false;
+   string screenshotFile = TakeChartScreenshot();
+   if(screenshotFile != "")
+      sent = SendTelegramPhoto(screenshotFile, message);
+
+   if(!sent)
+   {
+      Print("Falling back to text message alert...");
+      SendTelegramText(message);
+   }
+}
+
 // Expert tick function
 void OnTick()
 {
-   // On first run, wait until indicator buffer is ready, then initialize baseline
+   // On first run, wait until indicator buffer is ready, then initialize baseline references
    if(m_lastBarTime == 0)
    {
-      double dummyPrice;
+      double initUpperPrice = 0.0, initLowerPrice = 0.0;
       datetime initUpperTime = 0, initLowerTime = 0;
-      bool upperOk = GetLatestFractal(0, dummyPrice, initUpperTime);
-      bool lowerOk = GetLatestFractal(1, dummyPrice, initLowerTime);
+      bool upperOk = GetLatestFractal(0, initUpperPrice, initUpperTime);
+      bool lowerOk = GetLatestFractal(1, initLowerPrice, initLowerTime);
 
       if(!upperOk && !lowerOk)
       {
@@ -328,16 +379,36 @@ void OnTick()
          return;
       }
 
-      m_lastUpperFractalTime = initUpperTime;
-      m_lastLowerFractalTime = initLowerTime;
+      double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double offset = GetBreakoutOffset();
+
+      if(upperOk)
+      {
+         m_lastUpperFractalTime = initUpperTime;
+         m_refHighPrice         = initUpperPrice;
+         m_refHighTime          = initUpperTime;
+         // If current price already exceeded the high, do not fire stale alert at startup
+         m_highBreakoutAlerted  = (currentBid >= (m_refHighPrice + offset));
+      }
+
+      if(lowerOk)
+      {
+         m_lastLowerFractalTime = initLowerTime;
+         m_refLowPrice          = initLowerPrice;
+         m_refLowTime           = initLowerTime;
+         // If current price already exceeded the low, do not fire stale alert at startup
+         m_lowBreakoutAlerted   = (currentBid <= (m_refLowPrice - offset));
+      }
+
       m_lastBarTime = iTime(_Symbol, _Period, 0);
 
-      Print("Initialized fractal baseline. Upper bar: ", TimeToString(m_lastUpperFractalTime),
-            ", Lower bar: ", TimeToString(m_lastLowerFractalTime));
+      Print("Initialized fractal baseline.");
+      Print("  Latest High: ", m_refHighPrice, " on ", TimeToString(m_refHighTime), (m_highBreakoutAlerted ? " [Already broken]" : " [Active]"));
+      Print("  Latest Low: ", m_refLowPrice, " on ", TimeToString(m_refLowTime), (m_lowBreakoutAlerted ? " [Already broken]" : " [Active]"));
       return;
    }
 
-   // Check for NEW Upper Fractal (bearish arrow on high)
+   // 1. Check for NEW Upper Fractal arrow (bearish arrow on high)
    double upperPrice = 0.0;
    datetime upperTime = 0;
    if(GetLatestFractal(0, upperPrice, upperTime))
@@ -345,6 +416,9 @@ void OnTick()
       if(upperTime > m_lastUpperFractalTime)
       {
          m_lastUpperFractalTime = upperTime;
+         m_refHighPrice         = upperPrice;
+         m_refHighTime          = upperTime;
+         m_highBreakoutAlerted  = false; // Reset breakout state for this new high
 
          double atr = GetCurrentATR();
          string tfStr = GetPeriodString(_Period);
@@ -356,22 +430,11 @@ void OnTick()
             message += " " + DoubleToString(upperPrice, _Digits);
 
          Print(">>> NEW Upper Fractal at ", upperPrice, " on bar ", TimeToString(upperTime), " (ATR: ", DoubleToString(atr, 2), ")");
-
-         // Try sending screenshot photo, fallback to text if photo fails
-         bool sent = false;
-         string screenshotFile = TakeChartScreenshot();
-         if(screenshotFile != "")
-            sent = SendTelegramPhoto(screenshotFile, message);
-
-         if(!sent)
-         {
-            Print("Falling back to text message alert...");
-            SendTelegramText(message);
-         }
+         SendAlertNotification(message);
       }
    }
 
-   // Check for NEW Lower Fractal (bullish arrow on low)
+   // 2. Check for NEW Lower Fractal arrow (bullish arrow on low)
    double lowerPrice = 0.0;
    datetime lowerTime = 0;
    if(GetLatestFractal(1, lowerPrice, lowerTime))
@@ -379,6 +442,9 @@ void OnTick()
       if(lowerTime > m_lastLowerFractalTime)
       {
          m_lastLowerFractalTime = lowerTime;
+         m_refLowPrice          = lowerPrice;
+         m_refLowTime           = lowerTime;
+         m_lowBreakoutAlerted   = false; // Reset breakout state for this new low
 
          double atr = GetCurrentATR();
          string tfStr = GetPeriodString(_Period);
@@ -390,17 +456,55 @@ void OnTick()
             message += " " + DoubleToString(lowerPrice, _Digits);
 
          Print(">>> NEW Lower Fractal at ", lowerPrice, " on bar ", TimeToString(lowerTime), " (ATR: ", DoubleToString(atr, 2), ")");
+         SendAlertNotification(message);
+      }
+   }
 
-         // Try sending screenshot photo, fallback to text if photo fails
-         bool sent = false;
-         string screenshotFile = TakeChartScreenshot();
-         if(screenshotFile != "")
-            sent = SendTelegramPhoto(screenshotFile, message);
+   // 3. Check for Breakout of the latest High/Low Fractal references
+   if(InpEnableBreakoutAlert)
+   {
+      double currentBid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+      double offset = GetBreakoutOffset();
 
-         if(!sent)
+      // Check High Breakout (price moves above latest high fractal + offset)
+      if(!m_highBreakoutAlerted && m_refHighPrice > 0.0)
+      {
+         if(currentBid >= (m_refHighPrice + offset))
          {
-            Print("Falling back to text message alert...");
-            SendTelegramText(message);
+            m_highBreakoutAlerted = true;
+
+            double atr = GetCurrentATR();
+            string tfStr = GetPeriodString(_Period);
+
+            string message = "BREAK-HIGH-" + DoubleToString(atr, 2) + "\n" + tfStr;
+            if(InpShowSymbol)
+               message = "BREAK-HIGH-" + DoubleToString(atr, 2) + "\n" + _Symbol + " " + tfStr;
+            if(InpShowPrice)
+               message += " " + DoubleToString(currentBid, _Digits);
+
+            Print(">>> BREAKOUT HIGH at ", currentBid, " (Ref High: ", m_refHighPrice, " + ", InpBreakoutDistancePips, " pips)");
+            SendAlertNotification(message);
+         }
+      }
+
+      // Check Low Breakout (price moves below latest low fractal - offset)
+      if(!m_lowBreakoutAlerted && m_refLowPrice > 0.0)
+      {
+         if(currentBid <= (m_refLowPrice - offset))
+         {
+            m_lowBreakoutAlerted = true;
+
+            double atr = GetCurrentATR();
+            string tfStr = GetPeriodString(_Period);
+
+            string message = "BREAK-LOW-" + DoubleToString(atr, 2) + "\n" + tfStr;
+            if(InpShowSymbol)
+               message = "BREAK-LOW-" + DoubleToString(atr, 2) + "\n" + _Symbol + " " + tfStr;
+            if(InpShowPrice)
+               message += " " + DoubleToString(currentBid, _Digits);
+
+            Print(">>> BREAKOUT LOW at ", currentBid, " (Ref Low: ", m_refLowPrice, " - ", InpBreakoutDistancePips, " pips)");
+            SendAlertNotification(message);
          }
       }
    }
